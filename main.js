@@ -20,7 +20,24 @@ function createWindow() {
   // 隐藏菜单栏
   mainWindow.setMenu(null);
 
+  // 部分源（如 iptv.lrj.qzz.io）按 User-Agent 嗅探，只给浏览器 UA 返回真实流地址
+  // Electron 默认 UA 会被拒绝（返回空 JSON），这里伪装成标准 Chrome
+  mainWindow.webContents.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  );
+
   mainWindow.loadFile('index.html');
+
+  // 渲染进程日志转发到终端（调试用）
+  mainWindow.webContents.on('console-message', (...args) => {
+    const e = args[0];
+    if (e && typeof e === 'object' && 'message' in e) {
+      if (e.level >= 2) console.log('[renderer]', e.message);
+    } else {
+      const level = args[1];
+      if (level >= 2) console.log('[renderer]', args[2]);
+    }
+  });
 //   mainWindow.webContents.openDevTools();
 }
 
@@ -89,6 +106,12 @@ function setupAutoUpdater() {
 ipcMain.handle('update:get-app-version', () => app.getVersion());
 
 ipcMain.handle('update:check', async () => {
+  // 开发模式下没有 app-update.yml，electron-updater 无法工作
+  if (!app.isPackaged) {
+    const err = new Error('开发模式下不支持检查更新，请使用打包安装版测试');
+    sendUpdaterEvent('error', { message: err.message });
+    throw err;
+  }
   try {
     const result = await autoUpdater.checkForUpdatesAndNotify();
     const updateInfo = result && result.updateInfo ? result.updateInfo : null;

@@ -218,6 +218,15 @@
   }
   .standby-name { font-size: 16px; font-weight: 600; }
   .standby-hint { font-size: 12px; color: var(--text-faint); letter-spacing: 2px; }
+  .standby-retry {
+    display: none; pointer-events: auto;
+    margin-top: 2px; padding: 8px 26px;
+    border: 1px solid rgba(229,72,77,.5); border-radius: 999px;
+    background: rgba(229,72,77,.12); color: var(--accent);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .standby-retry:hover { background: rgba(229,72,77,.28); }
+  .standby-retry.show { display: inline-flex; }
   .live-tag {
     position: absolute; top: 12px; left: 12px;
     display: flex; align-items: center; gap: 6px;
@@ -227,6 +236,23 @@
     pointer-events: none;
   }
   .live-tag .live-dot { width: 6px; height: 6px; }
+
+  /* 视频区加载动画 */
+  .video-loading {
+    position: absolute; inset: 0; z-index: 5;
+    background: #0a0c0f;
+    display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    pointer-events: none;
+  }
+  .video-loading.show { display: flex; }
+  .video-loading .spinner {
+    width: 44px; height: 44px;
+    border: 3px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 1s linear infinite;
+  }
+  .video-loading-text { font-size: 13px; color: var(--text-dim); }
+  .video-loading-name { font-size: 15px; font-weight: 600; color: var(--text); }
 
   /* OSD 控制条 */
   .osd {
@@ -272,6 +298,26 @@
   .info-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
   .info-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .info-group { font-size: 12px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 线路切换胶囊 */
+  .line-switch {
+    display: flex; gap: 6px; margin-top: 6px;
+    overflow-x: auto; scrollbar-width: none;
+    max-width: 100%;
+  }
+  .line-switch::-webkit-scrollbar { display: none; }
+  .line-pill {
+    flex: none; height: 20px; padding: 0 9px;
+    display: inline-flex; align-items: center;
+    border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text-dim);
+    font-size: 11px; cursor: pointer; white-space: nowrap;
+    transition: background .15s, color .15s, border-color .15s;
+    font-variant-numeric: tabular-nums;
+  }
+  .line-pill:hover { color: var(--text); background: var(--hover); }
+  .line-pill.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .line-pill.failed { opacity: .4; text-decoration: line-through; }
   .stat-chips { flex: none; display: flex; gap: 8px; }
   .stat-chip {
     display: flex; align-items: center; gap: 5px;
@@ -467,6 +513,12 @@
           <div class="standby-logo" id="standby-logo">TV</div>
           <div class="standby-name" id="standby-name">请选择一个频道</div>
           <div class="standby-hint" id="standby-hint">SELECT A CHANNEL</div>
+          <button class="standby-retry" id="standby-retry">↻ 重试连接</button>
+        </div>
+        <div class="video-loading" id="video-loading">
+          <div class="spinner"></div>
+          <div class="video-loading-name" id="video-loading-name"></div>
+          <div class="video-loading-text" id="video-loading-text">正在连接频道…</div>
         </div>
         <div class="live-tag" id="live-tag" style="display:none"><span class="live-dot"></span>LIVE</div>
         <div class="osd">
@@ -499,6 +551,7 @@
           <div style="min-width:0">
             <div class="info-title" id="channel-name">请选择一个频道</div>
             <div class="info-group" id="channel-group">在左侧列表中选择频道开始播放</div>
+            <div class="line-switch" id="line-switch"></div>
           </div>
         </div>
         <div class="stat-chips">

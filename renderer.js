@@ -4,14 +4,14 @@ const channelGroup = document.getElementById('channel-group');
 
 let hls = null;
 let flvPlayer = null;
-let allTracks = [];
-let filteredTracks = [];
-let currentTrackIndex = -1;
-let failedTracks = new Set();
-let isSwitching = false;
+let channels = [];          // 去重后的频道: [{name, attributes, lines: [{url, group, attrs}]}]
+let filteredChannels = [];  // 当前过滤后的频道
+let currentCategory = '全部';
+let currentChannelIdx = -1;
+let currentLineIdx = -1;
+let failedLines = new Set(); // "频道索引:线路索引"
 let m3uUrl = '';
 let selectedUrl = '';
-let currentCategory = '全部';
 
 // 台标配色（按频道名哈希取色，保持稳定）
 const LOGO_COLORS = ['#c94f4f','#4f7cc9','#5aa66a','#a68a4f','#8a5ac9','#4fa6a0','#c96a4f','#5a6bc9','#7aa64f','#a64f86'];
@@ -65,9 +65,22 @@ function updateSourcePill() {
   document.getElementById('status-source').textContent = '当前源：' + (m3uUrl || '-');
 }
 
+function channelFailedKey(chIdx, lineIdx) { return chIdx + ':' + lineIdx; }
+
+function isLineFailed(chIdx, lineIdx) {
+  return failedLines.has(channelFailedKey(chIdx, lineIdx));
+}
+
+function channelAllFailed(chIdx) {
+  const ch = channels[chIdx];
+  if (!ch) return false;
+  return ch.lines.every((_, i) => isLineFailed(chIdx, i));
+}
+
 function updateStats() {
-  document.getElementById('stat-total').textContent = allTracks.length;
-  document.getElementById('stat-failed').textContent = failedTracks.size;
+  document.getElementById('stat-total').textContent = channels.length;
+  document.getElementById('stat-failed').textContent =
+    channels.reduce((n, _, i) => n + (channelAllFailed(i) ? 1 : 0), 0);
 }
 
 function updateClock() {
@@ -125,6 +138,36 @@ function parseM3U(content) {
   return tracks;
 }
 
+// 同名频道去重，合并为多线路
+function buildChannels(tracks) {
+  const map = new Map();
+  for (const t of tracks) {
+    const name = t.name || '未知频道';
+    if (!map.has(name)) {
+      map.set(name, { name, attributes: { ...t.attributes }, lines: [] });
+    }
+    map.get(name).lines.push({
+      url: t.url,
+      group: t.attributes['group-title'] || '未分组',
+      attrs: t.attributes
+    });
+  }
+  return [...map.values()];
+}
+
+function primaryGroup(ch) {
+  return ch.lines[0].group;
+}
+
+function detectFormatLabel(url) {
+  const u = url.toLowerCase();
+  if (u.includes('m3u8')) return 'HLS';
+  if (u.includes('flv')) return 'FLV';
+  if (u.startsWith('rtmp://')) return 'RTMP';
+  if (u.includes('mp4')) return 'MP4';
+  return 'LIVE';
+}
+
 // ============ 播放器管理 ============
 function cleanupPlayers() {
   if (hls) {
@@ -147,6 +190,7 @@ function showPlayError(message) {
 
 function setStandby(logo, name, hint) {
   const standby = document.getElementById('video-standby');
+  document.getElementById('standby-retry').classList.remove('show');
   if (logo === null) {
     standby.classList.add('hidden');
     document.getElementById('live-tag').style.display = 'flex';
@@ -161,6 +205,19 @@ function setStandby(logo, name, hint) {
   }
 }
 
+// 视频区加载动画
+function showVideoLoading(name, lineIdx) {
+  const el = document.getElementById('video-loading');
+  document.getElementById('video-loading-name').textContent = name || '';
+  document.getElementById('video-loading-text').textContent =
+    lineIdx !== undefined ? `正在连接线路${lineIdx + 1}…` : '正在连接频道…';
+  el.classList.add('show');
+}
+
+function hideVideoLoading() {
+  document.getElementById('video-loading').classList.remove('show');
+}
+
 // 台标 HTML：优先使用 tvg-logo 图片，失败回退到文字缩写
 function logoHTML(track, cls) {
   const name = track.name || '';
@@ -173,106 +230,146 @@ function logoHTML(track, cls) {
   return `<div class="${cls}" style="background:${color}">${escapeHtml(logoText)}</div>`;
 }
 
-function setInfoBar(track) {
+function setInfoBar(ch) {
   const infoLogoBox = document.getElementById('info-logo');
   const tmp = document.createElement('div');
-  tmp.innerHTML = logoHTML(track, 'info-logo');
+  tmp.innerHTML = logoHTML(ch, 'info-logo');
   const el = tmp.firstChild;
   el.id = 'info-logo';
   infoLogoBox.replaceWith(el);
-  channelName.textContent = track.name || '未知频道';
-  const fmt = detectFormatLabel(track.url);
-  channelGroup.textContent = `分组: ${track.attributes['group-title'] || '未分组'} · ${fmt}`;
-  document.getElementById('stat-format').textContent = fmt;
-}
 
-function detectFormatLabel(url) {
-  const u = url.toLowerCase();
-  if (u.includes('m3u8')) return 'HLS';
-  if (u.includes('flv')) return 'FLV';
-  if (u.startsWith('rtmp://')) return 'RTMP';
-  if (u.includes('mp4')) return 'MP4';
-  return 'LIVE';
+  channelName.textContent = ch.name;
+  const fmt = detectFormatLabel(ch.lines[currentLineIdx]?.url || ch.lines[0].url);
+  channelGroup.textContent = `分组: ${primaryGroup(ch)} · ${fmt}`;
+  document.getElementById('stat-format').textContent = fmt;
+
+  // 线路切换胶囊
+  const lineSwitch = document.getElementById('line-switch');
+  if (ch.lines.length > 1) {
+    lineSwitch.style.display = 'flex';
+    lineSwitch.innerHTML = ch.lines.map((l, i) => {
+      const failed = isLineFailed(currentChannelIdx, i);
+      return `<span class="line-pill ${i === currentLineIdx ? 'active' : ''} ${failed ? 'failed' : ''}" data-line="${i}">线路${i + 1}·${detectFormatLabel(l.url)}</span>`;
+    }).join('');
+    lineSwitch.querySelectorAll('.line-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        playLine(currentChannelIdx, Number(pill.dataset.line));
+      });
+    });
+  } else {
+    lineSwitch.style.display = 'none';
+    lineSwitch.innerHTML = '';
+  }
 }
 
 // ============ 频道列表渲染 ============
 function getCategories() {
   const map = new Map();
-  allTracks.forEach(t => {
-    const g = t.attributes['group-title'] || '未分组';
+  channels.forEach(ch => {
+    const g = primaryGroup(ch);
     map.set(g, (map.get(g) || 0) + 1);
   });
-  // 按频道数降序
   return [...map.entries()].sort((a, b) => b[1] - a[1]);
 }
 
 function renderCategories() {
   const bar = document.getElementById('cat-bar');
   const cats = getCategories();
-  const items = [['全部', allTracks.length], ...cats];
+  const items = [['全部', channels.length], ...cats];
   bar.innerHTML = items.map(([name, count]) => `
-    <div class="cat-chip ${name === currentCategory ? 'active' : ''}" data-cat="${name}">
-      ${name}<span class="count">${count}</span>
+    <div class="cat-chip ${name === currentCategory ? 'active' : ''}" data-cat="${escapeHtml(name)}">
+      ${escapeHtml(name)}<span class="count">${count}</span>
     </div>`).join('');
   bar.querySelectorAll('.cat-chip').forEach(chip => {
     chip.addEventListener('click', () => {
+      if (catDragMoved) return; // 拖拽滑动结束后不触发点击
       currentCategory = chip.dataset.cat;
-      filterAndRender();
+      renderCategories();   // 刷新胶囊选中态
+      filterAndRender();    // 刷新列表
     });
   });
 }
 
-function filterTracks() {
+// 分类条：滚轮横滚 + 鼠标拖拽滑动
+let catDragging = false, catDragStartX = 0, catDragStartScroll = 0, catDragMoved = false;
+function initCatBarScroll() {
+  const bar = document.getElementById('cat-bar');
+
+  bar.addEventListener('wheel', e => {
+    if (bar.scrollWidth > bar.clientWidth) {
+      e.preventDefault();
+      bar.scrollLeft += (e.deltaY + e.deltaX);
+    }
+  }, { passive: false });
+
+  bar.addEventListener('mousedown', e => {
+    if (bar.scrollWidth <= bar.clientWidth) return;
+    catDragging = true;
+    catDragMoved = false;
+    catDragStartX = e.pageX;
+    catDragStartScroll = bar.scrollLeft;
+  });
+  window.addEventListener('mousemove', e => {
+    if (!catDragging) return;
+    const dx = e.pageX - catDragStartX;
+    if (Math.abs(dx) > 5) catDragMoved = true;
+    bar.scrollLeft = catDragStartScroll - dx;
+  });
+  window.addEventListener('mouseup', () => { catDragging = false; });
+}
+
+function filterChannels() {
   const kw = document.getElementById('search-input').value.toLowerCase().trim();
-  let list = currentCategory === '全部' ? allTracks : allTracks.filter(t => (t.attributes['group-title'] || '未分组') === currentCategory);
+  let list = currentCategory === '全部'
+    ? channels
+    : channels.filter(ch => primaryGroup(ch) === currentCategory);
   if (kw) {
-    list = list.filter(t =>
-      (t.name || '').toLowerCase().includes(kw) ||
-      (t.attributes['group-title'] || '').toLowerCase().includes(kw)
-    );
+    list = list.filter(ch => ch.name.toLowerCase().includes(kw));
   }
   return list;
 }
 
 function filterAndRender() {
-  filteredTracks = filterTracks();
+  filteredChannels = filterChannels();
   updatePlaylist();
   document.getElementById('list-label').textContent =
     currentCategory === '全部' ? '频道列表' : currentCategory;
-  document.getElementById('list-count').textContent = filteredTracks.length + ' 个';
+  document.getElementById('list-count').textContent = filteredChannels.length + ' 个';
 }
 
 function updatePlaylist() {
   playlistContainer.innerHTML = '';
 
-  if (filteredTracks.length === 0) {
+  if (filteredChannels.length === 0) {
     playlistContainer.innerHTML = '<div class="ch-list-empty">没有匹配的频道</div>';
     return;
   }
 
-  filteredTracks.forEach((track, index) => {
-    const originalIndex = allTracks.findIndex(t => t.url === track.url);
+  filteredChannels.forEach((ch, index) => {
+    const originalIndex = channels.indexOf(ch);
     const item = document.createElement('div');
     item.className = 'ch-item';
     item.dataset.index = originalIndex;
-    if (originalIndex === currentTrackIndex) item.classList.add('active');
-    if (failedTracks.has(originalIndex)) item.classList.add('failed');
+    if (originalIndex === currentChannelIdx) item.classList.add('active');
+    if (channelAllFailed(originalIndex)) item.classList.add('failed');
 
-    const stateHtml = failedTracks.has(originalIndex)
+    const fmt = detectFormatLabel(ch.lines[0].url);
+    const lineCount = ch.lines.length > 1 ? ` · ${ch.lines.length}线路` : '';
+    const stateHtml = channelAllFailed(originalIndex)
       ? '<div class="fail-dot"></div>'
-      : (originalIndex === currentTrackIndex ? '<div class="live-dot"></div>' : '');
+      : (originalIndex === currentChannelIdx ? '<div class="live-dot"></div>' : '');
 
     item.innerHTML = `
       <div class="ch-idx">${String(index + 1).padStart(2, '0')}</div>
-      ${logoHTML(track, 'ch-logo')}
+      ${logoHTML(ch, 'ch-logo')}
       <div class="ch-meta">
-        <div class="ch-name">${escapeHtml(track.name || '未知频道')}</div>
-        <div class="ch-sub">${escapeHtml(track.attributes['group-title'] || '未分组')} · ${detectFormatLabel(track.url)}</div>
+        <div class="ch-name">${escapeHtml(ch.name)}</div>
+        <div class="ch-sub">${escapeHtml(primaryGroup(ch))} · ${fmt}${lineCount}</div>
       </div>
       <div class="ch-state">${stateHtml}</div>`;
 
     item.addEventListener('click', () => {
-      playChannel(track, originalIndex);
+      playChannel(ch, originalIndex);
     });
 
     playlistContainer.appendChild(item);
@@ -285,58 +382,74 @@ function escapeHtml(s) {
 
 function markActiveItem(index) {
   document.querySelectorAll('.ch-item').forEach(el => {
-    const isActive = Number(el.dataset.index) === index;
+    const idx = Number(el.dataset.index);
+    const isActive = idx === index;
     el.classList.toggle('active', isActive);
     const state = el.querySelector('.ch-state');
-    if (state) state.innerHTML = failedTracks.has(Number(el.dataset.index)) ? '<div class="fail-dot"></div>' : (isActive ? '<div class="live-dot"></div>' : '');
+    if (state) {
+      state.innerHTML = channelAllFailed(idx) ? '<div class="fail-dot"></div>' : (isActive ? '<div class="live-dot"></div>' : '');
+    }
   });
   const activeEl = playlistContainer.querySelector('.ch-item.active');
   if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function markTrackAsFailed(index) {
-  failedTracks.add(index);
-  document.querySelectorAll('.ch-item').forEach(el => {
-    if (Number(el.dataset.index) === index) el.classList.add('failed');
-  });
+// 线路失效处理：标记、更新行状态，若正播该线路则自动切换下一条可用线路
+function onLineFailed(chIdx, lineIdx) {
+  failedLines.add(channelFailedKey(chIdx, lineIdx));
   updateStats();
-  console.log(`频道 ${index} 标记为失败，已失败频道数: ${failedTracks.size}/${allTracks.length}`);
+
+  document.querySelectorAll('.ch-item').forEach(el => {
+    if (Number(el.dataset.index) === chIdx && channelAllFailed(chIdx)) {
+      el.classList.add('failed');
+    }
+  });
+  updateLinePills();
+
+  if (chIdx !== currentChannelIdx) return;
+
+  const ch = channels[chIdx];
+  const nextLine = ch.lines.findIndex((_, i) => !isLineFailed(chIdx, i));
+  if (nextLine >= 0) {
+    showToast(`线路${lineIdx + 1} 失效，自动切换到线路${nextLine + 1}`);
+    setTimeout(() => playLine(chIdx, nextLine), 800);
+  } else {
+    hideVideoLoading();
+    showPlayError('该频道所有线路均不可用，请选择其他频道');
+    setStandby(shortLogo(ch.name), ch.name, 'ALL LINES FAILED');
+    // 显示重试按钮：上游源可能只是临时故障，清除失效标记后重新连接
+    document.getElementById('standby-retry').classList.add('show');
+  }
 }
 
-function playNextAvailable() {
-  if (allTracks.length === 0 || isSwitching) return;
-
-  isSwitching = true;
-  for (let i = currentTrackIndex + 1; i < allTracks.length; i++) {
-    const track = allTracks[i];
-    if (!failedTracks.has(i) && !track.url.startsWith('rtmp://')) {
-      currentTrackIndex = i;
-      markActiveItem(i);
-      playChannel(track, i);
-      setTimeout(() => { isSwitching = false; }, 500);
-      return;
-    }
-  }
-
-  showPlayError(`已尝试所有频道，${failedTracks.size}/${allTracks.length} 个频道不可用`);
-  isSwitching = false;
+function updateLinePills() {
+  if (currentChannelIdx < 0 || currentLineIdx < 0) return;
+  const ch = channels[currentChannelIdx];
+  if (!ch || ch.lines.length <= 1) return;
+  document.querySelectorAll('.line-pill').forEach(pill => {
+    const i = Number(pill.dataset.line);
+    pill.classList.toggle('active', i === currentLineIdx);
+    pill.classList.toggle('failed', isLineFailed(currentChannelIdx, i));
+  });
 }
 
 // ============ 播放 ============
-function playChannel(track, index) {
-  if (index !== undefined) {
-    currentTrackIndex = index;
+function playChannel(ch, chIdx, lineIdx = null) {
+  if (lineIdx === null) {
+    // 从第一条可用线路开始
+    lineIdx = ch.lines.findIndex((_, i) => !isLineFailed(chIdx, i));
+    if (lineIdx < 0) lineIdx = 0;
   }
+  currentChannelIdx = chIdx;
+  currentLineIdx = lineIdx;
 
-  currentCategory = '全部';
-  document.getElementById('search-input').value = '';
-  filterAndRender();
-
+  markActiveItem(chIdx);
   setStandby(null);
-  setInfoBar(track);
-  markActiveItem(currentTrackIndex);
+  setInfoBar(ch);
+  showVideoLoading(ch.name, lineIdx);
 
-  console.log(`开始播放频道 ${index}: ${track.name}`);
+  const line = ch.lines[lineIdx];
+  console.log(`开始播放频道 ${chIdx} 线路${lineIdx + 1}: ${ch.name} <- ${line.url}`);
 
   const video = document.getElementById('my-video');
   cleanupPlayers();
@@ -344,21 +457,30 @@ function playChannel(track, index) {
   video.removeAttribute('src');
   video.load();
 
-  const url = track.url.toLowerCase();
-  if (url.includes('.m3u8') || url.includes('/m3u8') || url.includes('hls') || url.includes('playlist')) {
-    playHLS(video, track.url, index);
+  const url = line.url.toLowerCase();
+  // 明确的直接视频扩展名 -> 原生播放
+  if (/\.(mp4|webm|ogg|ogv|mkv|mov|avi)(\?|$)/.test(url)) {
+    playNative(video, line.url, chIdx, lineIdx);
   } else if (url.includes('.flv') || url.includes('/flv') || url.includes('flv?')) {
-    playFLV(video, track.url, index);
-  } else if (track.url.startsWith('rtmp://')) {
-    markTrackAsFailed(index);
-    showPlayError('RTMP格式暂不支持，请手动选择其他频道');
-    setStandby(shortLogo(track.name), track.name, 'RTMP NOT SUPPORTED');
+    playFLV(video, line.url, chIdx, lineIdx);
+  } else if (line.url.startsWith('rtmp://')) {
+    onLineFailed(chIdx, lineIdx);
+    showPlayError('RTMP格式暂不支持');
+    setStandby(shortLogo(ch.name), ch.name, 'RTMP NOT SUPPORTED');
   } else {
-    playNative(video, track.url, index);
+    // m3u8 及无扩展名 URL（如 /lirj/641886683，跳转后为 HLS）一律走 hls.js
+    playHLS(video, line.url, chIdx, lineIdx);
   }
 }
 
-function playHLS(video, url, trackIndex) {
+function playLine(chIdx, lineIdx) {
+  playChannel(channels[chIdx], chIdx, lineIdx);
+}
+
+// HLS 解析失败时回退原生播放（每条线路只试一次）
+const nativeFallbackTried = new Set();
+
+function playHLS(video, url, chIdx, lineIdx) {
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
     hls = new Hls({
       enableWorker: true,
@@ -389,9 +511,7 @@ function playHLS(video, url, trackIndex) {
           try { hls.destroy(); } catch (e) {}
           hls = null;
         }
-        markTrackAsFailed(trackIndex);
-        showPlayError('频道加载超时，请手动选择其他频道');
-        setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'TIMEOUT');
+        onLineFailed(chIdx, lineIdx);
       }
     }, 30000);
 
@@ -407,8 +527,8 @@ function playHLS(video, url, trackIndex) {
           if (e.name === 'AbortError') return;
           if (!hasError) {
             hasError = true;
-            markTrackAsFailed(trackIndex);
-            showPlayError('播放失败，请手动选择其他频道');
+            clearTimeout(playTimeout);
+            onLineFailed(chIdx, lineIdx);
           }
         });
       }, 100);
@@ -423,9 +543,7 @@ function playHLS(video, url, trackIndex) {
         switch(data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
             if (data.details === 'manifestLoadError') {
-              markTrackAsFailed(trackIndex);
-              showPlayError('频道链接失效或无法访问，请手动选择其他频道');
-              setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'LINK FAILED');
+              onLineFailed(chIdx, lineIdx);
             } else {
               hasError = false;
               hls.startLoad();
@@ -435,21 +553,32 @@ function playHLS(video, url, trackIndex) {
             hasError = false;
             hls.recoverMediaError();
             break;
-          default:
-            markTrackAsFailed(trackIndex);
+          default: {
+            // manifest 解析失败/为空：URL 可能是伪装成无扩展名的直链视频，回退原生播放
+            const fbKey = chIdx + ':' + lineIdx;
+            if ((data.details === 'manifestParsingError' || data.details === 'manifestEmptyError') && !nativeFallbackTried.has(fbKey)) {
+              nativeFallbackTried.add(fbKey);
+              hasError = false;
+              if (playTimeout) clearTimeout(playTimeout);
+              try { hls.destroy(); } catch (e) {}
+              hls = null;
+              console.log('HLS解析失败，回退原生播放:', url);
+              playNative(video, url, chIdx, lineIdx);
+              return;
+            }
             if (hls) {
               try { hls.destroy(); } catch (e) {}
               hls = null;
             }
-            showPlayError('播放错误，请手动选择其他频道');
-            setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'ERROR');
+            onLineFailed(chIdx, lineIdx);
             break;
+          }
         }
       } else {
         if (data.details === 'bufferStalledError') {
           bufferStalledCount++;
           if (bufferStalledCount >= 3 && !manifestLoaded) {
-            console.warn('缓冲区多次不足，可能频道无法播放');
+            console.warn('缓冲区多次不足，可能线路无法播放');
           }
         }
       }
@@ -458,22 +587,20 @@ function playHLS(video, url, trackIndex) {
     video.src = url;
     const errorHandler = function() {
       video.removeEventListener('error', errorHandler);
-      markTrackAsFailed(trackIndex);
-      showPlayError('视频格式不支持，请手动选择其他频道');
+      onLineFailed(chIdx, lineIdx);
     };
     video.addEventListener('error', errorHandler);
     video.play().catch(e => {
       video.removeEventListener('error', errorHandler);
-      markTrackAsFailed(trackIndex);
-      showPlayError('播放失败，请手动选择其他频道');
+      onLineFailed(chIdx, lineIdx);
     });
   } else {
-    markTrackAsFailed(trackIndex);
-    showPlayError('您的浏览器不支持HLS播放，请手动选择其他频道');
+    onLineFailed(chIdx, lineIdx);
+    showToast('您的浏览器不支持HLS播放');
   }
 }
 
-function playFLV(video, url, trackIndex) {
+function playFLV(video, url, chIdx, lineIdx) {
   if (typeof flvjs !== 'undefined' && flvjs.isSupported()) {
     try {
       flvPlayer = flvjs.createPlayer({
@@ -491,41 +618,34 @@ function playFLV(video, url, trackIndex) {
           try { flvPlayer.destroy(); } catch (e) {}
           flvPlayer = null;
         }
-        markTrackAsFailed(trackIndex);
-        showPlayError('FLV加载超时，请手动选择其他频道');
-        setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'TIMEOUT');
+        onLineFailed(chIdx, lineIdx);
       }, 30000);
 
       flvPlayer.play().then(() => {
         if (playTimeout) clearTimeout(playTimeout);
       }).catch(e => {
         if (playTimeout) clearTimeout(playTimeout);
-        markTrackAsFailed(trackIndex);
-        showPlayError('FLV播放失败，请手动选择其他频道');
+        onLineFailed(chIdx, lineIdx);
       });
 
       flvPlayer.on(flvjs.Events.ERROR, function() {
-        markTrackAsFailed(trackIndex);
-        showPlayError('FLV播放错误，请手动选择其他频道');
-        setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'ERROR');
+        if (playTimeout) clearTimeout(playTimeout);
+        onLineFailed(chIdx, lineIdx);
       });
     } catch (e) {
-      markTrackAsFailed(trackIndex);
-      showPlayError('FLV初始化失败，请手动选择其他频道');
+      onLineFailed(chIdx, lineIdx);
     }
   } else {
     showToast('您的浏览器不支持FLV播放');
   }
 }
 
-function playNative(video, url, trackIndex) {
+function playNative(video, url, chIdx, lineIdx) {
   const mediaType = getMediaType(url);
   const canPlay = video.canPlayType(mediaType);
 
   if (canPlay === '') {
-    markTrackAsFailed(trackIndex);
-    showPlayError('格式不支持，请手动选择其他频道');
-    setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'FORMAT ERROR');
+    onLineFailed(chIdx, lineIdx);
     return;
   }
 
@@ -535,9 +655,7 @@ function playNative(video, url, trackIndex) {
     video.removeEventListener('error', errorHandler);
     video.removeEventListener('canplay', canPlayHandler);
     if (playTimeout) clearTimeout(playTimeout);
-    markTrackAsFailed(trackIndex);
-    showPlayError('视频格式不支持，请手动选择其他频道');
-    setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'FORMAT ERROR');
+    onLineFailed(chIdx, lineIdx);
   };
 
   const canPlayHandler = function() {
@@ -551,9 +669,7 @@ function playNative(video, url, trackIndex) {
   let playTimeout = setTimeout(() => {
     video.removeEventListener('error', errorHandler);
     video.removeEventListener('canplay', canPlayHandler);
-    markTrackAsFailed(trackIndex);
-    showPlayError('视频加载超时，请手动选择其他频道');
-    setStandby(shortLogo(allTracks[trackIndex]?.name), allTracks[trackIndex]?.name, 'TIMEOUT');
+    onLineFailed(chIdx, lineIdx);
   }, 30000);
 
   video.play().then(() => {
@@ -562,8 +678,7 @@ function playNative(video, url, trackIndex) {
     if (playTimeout) clearTimeout(playTimeout);
     video.removeEventListener('error', errorHandler);
     video.removeEventListener('canplay', canPlayHandler);
-    markTrackAsFailed(trackIndex);
-    showPlayError('无法播放此频道，请手动选择其他频道');
+    onLineFailed(chIdx, lineIdx);
   });
 }
 
@@ -606,17 +721,18 @@ async function loadM3U() {
 
     const m3uContent = await response.text();
     const tracks = parseM3U(m3uContent);
-    console.log(`共加载 ${tracks.length} 个频道`);
+    channels = buildChannels(tracks);
+    console.log(`共加载 ${tracks.length} 个频道，去重后 ${channels.length} 个频道`);
 
-    allTracks = tracks;
     currentCategory = '全部';
-    failedTracks.clear();
-    currentTrackIndex = -1;
+    failedLines.clear();
+    currentChannelIdx = -1;
+    currentLineIdx = -1;
     renderCategories();
     filterAndRender();
     updateStats();
 
-    if (tracks.length > 0) {
+    if (channels.length > 0) {
       channelName.textContent = '请选择一个频道';
       channelGroup.textContent = '在左侧列表中选择频道开始播放';
       setStandby('TV', '请选择一个频道', 'SELECT A CHANNEL');
@@ -724,10 +840,25 @@ function initOSD() {
   document.getElementById('osd-prev').addEventListener('click', () => switchChannel(-1));
   document.getElementById('osd-next').addEventListener('click', () => switchChannel(1));
 
+  // 视频真正出画面后隐藏加载动画
+  video.addEventListener('playing', hideVideoLoading);
+
+  // 待机画面重试按钮：清除该频道的失效标记后重新连接
+  document.getElementById('standby-retry').addEventListener('click', () => {
+    if (currentChannelIdx < 0) return;
+    channels[currentChannelIdx].lines.forEach((_, i) => failedLines.delete(channelFailedKey(currentChannelIdx, i)));
+    document.querySelectorAll('.ch-item').forEach(el => {
+      if (Number(el.dataset.index) === currentChannelIdx) el.classList.remove('failed');
+    });
+    updateStats();
+    showToast('正在重试连接…');
+    playLine(currentChannelIdx, 0);
+  });
+
   const playIconPlay = 'M8 5v14l11-7z';
   const playIconPause = 'M6 5h4v14H6zM14 5h4v14h-4z';
   document.getElementById('osd-play').addEventListener('click', () => {
-    if (currentTrackIndex < 0) return;
+    if (currentChannelIdx < 0) return;
     if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
   });
   video.addEventListener('play', () => {
@@ -744,14 +875,13 @@ function initOSD() {
     document.getElementById('osd-mute-icon').querySelector('path').setAttribute('d', video.muted ? muteIconOff : muteIconOn);
   });
 
-  // 音量条：点击设置音量
+  // 音量条：点击/拖动设置音量
   const vol = document.getElementById('osd-vol');
   function setVolume(e) {
     const rect = vol.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     video.volume = ratio;
     video.muted = false;
-    updateVolumeUI();
     document.getElementById('osd-mute-icon').querySelector('path').setAttribute('d', muteIconOn);
   }
   let dragging = false;
@@ -781,37 +911,23 @@ function initOSD() {
   });
 }
 
+// 切换频道（在当前过滤列表内导航，跳过全失效频道）
 function switchChannel(direction) {
-  if (allTracks.length === 0) return;
-  // 优先在当前过滤列表内切换，否则全局切换
-  let list = filteredTracks.length > 1 ? filteredTracks : allTracks;
-  if (filteredTracks.length > 1) {
-    const pos = filteredTracks.findIndex(t => allTracks.findIndex(x => x.url === t.url) === currentTrackIndex);
-    for (let k = 1; k <= list.length; k++) {
-      const next = filteredTracks[(pos + direction * k + list.length * k) % list.length];
-      const gi = allTracks.findIndex(x => x.url === next.url);
-      if (!failedTracks.has(gi) && !next.url.startsWith('rtmp://')) {
-        playChannel(next, gi);
-        return;
-      }
-    }
-  } else {
-    for (let k = 1; k <= allTracks.length; k++) {
-      const idx = (currentTrackIndex + direction * k + allTracks.length * k) % allTracks.length;
-      const t = allTracks[idx];
-      if (!failedTracks.has(idx) && !t.url.startsWith('rtmp://')) {
-        playChannel(t, idx);
-        return;
-      }
+  if (channels.length === 0) return;
+  const list = filteredChannels.length > 1 ? filteredChannels : channels;
+  const idxInList = list.indexOf(channels[currentChannelIdx]);
+  for (let k = 1; k <= list.length; k++) {
+    const next = list[(idxInList + direction * k + list.length * k) % list.length];
+    const gi = channels.indexOf(next);
+    if (!channelAllFailed(gi)) {
+      playChannel(next, gi);
+      return;
     }
   }
   showToast('没有可用频道');
 }
 
 // ============ 检查更新 ============
-const UPDATE_STATUS = {
-  idle: '连接 GitHub Release 检查新版本',
-};
 let updateDownloaded = false;
 
 function initUpdaterUI() {
@@ -833,25 +949,21 @@ function initUpdaterUI() {
   checkBtn.addEventListener('click', async () => {
     checkBtn.disabled = true;
     checkBtn.textContent = '检查中…';
-    statusEl.className = 'update-status';
-    statusEl.textContent = '正在连接 GitHub Release…';
     try {
-      const result = await window.updateAPI.check();
-      // result 由事件驱动，这里只做超时兜底
-      setTimeout(() => {
-        if (checkBtn.textContent === '检查中…') {
-          checkBtn.disabled = false;
-          checkBtn.textContent = '检查更新';
-          statusEl.className = 'update-status err';
-          statusEl.textContent = '检查超时，请检查网络后重试';
-        }
-      }, 20000);
+      await window.updateAPI.check();
     } catch (err) {
+      // 错误通过 updater 事件处理，这里兜底
       checkBtn.disabled = false;
       checkBtn.textContent = '检查更新';
-      statusEl.className = 'update-status err';
-      statusEl.textContent = '检查失败: ' + (err.message || err);
     }
+    setTimeout(() => {
+      if (checkBtn.textContent === '检查中…') {
+        checkBtn.disabled = false;
+        checkBtn.textContent = '检查更新';
+        statusEl.className = 'update-status err';
+        statusEl.textContent = '检查超时，请检查网络后重试';
+      }
+    }, 20000);
   });
 
   installBtn.addEventListener('click', () => {
@@ -913,6 +1025,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeConfig();
   loadM3U();
   initOSD();
+  initCatBarScroll();
   initUpdaterUI();
   updateClock();
   setInterval(updateClock, 1000);
@@ -933,7 +1046,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('settings-modal').classList.add('open');
   });
   document.getElementById('refresh-btn').addEventListener('click', () => {
-    failedTracks.clear();
+    failedLines.clear();
     loadM3U();
   });
   document.getElementById('settings-close').addEventListener('click', () => {
@@ -969,9 +1082,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (modalOpen) return;
-    if (e.key === 'ArrowUp') { e.preventDefault(); switchChannel(-1); }
-    if (e.key === 'ArrowDown') { e.preventDefault(); switchChannel(1); }
-    if (e.key === 'ArrowLeft') { e.preventDefault(); switchChannel(-1); }
-    if (e.key === 'ArrowRight') { e.preventDefault(); switchChannel(1); }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); switchChannel(-1); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { e.preventDefault(); switchChannel(1); }
   });
 });

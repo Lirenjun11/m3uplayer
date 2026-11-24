@@ -63,6 +63,7 @@ function setCurrentUrl(url) {
   return config;
 }
 
+window.__configPath = CONFIG_FILE;
 window.loadConfig = loadConfig;
 window.addUrl = addUrl;
 window.removeUrl = removeUrl;
