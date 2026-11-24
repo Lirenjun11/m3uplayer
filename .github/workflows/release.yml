@@ -1,0 +1,54 @@
+name: Build and Release
+
+# 推送 v* 版本标签时自动触发，也可手动触发
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --publish never
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Create Release and Upload Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version && format('v{0}', steps.version.outputs.version) || github.ref_name }}
+          name: M3U Player ${{ github.ref_name }}
+          body: |
+            ## M3U Player ${{ github.ref_name }}
+
+            ### 下载
+            - **M3U.Player.Setup.${{ steps.version.outputs.version }}.exe** - 安装版（NSIS 安装向导）
+            - **M3U.Player.${{ steps.version.outputs.version }}.exe** - 便携版（免安装，单文件运行）
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.exe
+            dist/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
