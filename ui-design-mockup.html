@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M3U Player UI 设计稿</title>
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #16191f;
+    --panel-2: #1c2028;
+    --hover: #232833;
+    --line: #262b35;
+    --text: #e9ecf1;
+    --text-dim: #8b93a1;
+    --text-faint: #5c6472;
+    --accent: #e5484d;
+    --accent-dim: rgba(229, 72, 77, 0.12);
+    --ok: #46c26e;
+    --radius: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    user-select: none;
+  }
+  svg { display: block; }
+
+  /* ====== 外层预览控制 ====== */
+  #preview-toggle {
+    position: fixed; right: 16px; bottom: 16px; z-index: 3000;
+    background: var(--panel-2); color: var(--text-dim);
+    border: 1px solid var(--line); border-radius: 20px;
+    padding: 6px 14px; font-size: 12px; cursor: pointer;
+  }
+  #preview-toggle:hover { color: var(--text); background: var(--hover); }
+  #stage { height: 100vh; }
+  body.phone #stage {
+    height: 844px; width: 390px;
+    margin: 20px auto; border-radius: 24px; overflow: hidden;
+    border: 1px solid var(--line); position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  body.phone { overflow: auto; background: #07080a; }
+
+  /* ====== 整体框架 ====== */
+  #app { height: 100vh; display: flex; flex-direction: column; }
+  body.phone #app { height: 844px; }
+
+  /* ====== 顶栏 ====== */
+  .topbar {
+    height: 44px; flex: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 700; font-size: 13px; letter-spacing: 1px;
+  }
+  .logo-mark {
+    width: 20px; height: 20px; border-radius: 5px;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .logo-mark svg { width: 11px; height: 11px; fill: #fff; }
+  .source-pill {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 14px; padding: 3px 10px;
+    color: var(--text-dim); font-size: 12px;
+    max-width: 200px; cursor: pointer;
+  }
+  .source-pill:hover { color: var(--text); }
+  .source-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; }
+  .source-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-spacer { flex: 1; }
+  .icon-btn {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); cursor: pointer; flex: none;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .icon-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* ====== 主体两栏 ====== */
+  .main { flex: 1; display: flex; min-height: 0; }
+
+  /* ====== 左侧边栏 ====== */
+  .sidebar {
+    width: 272px; flex: none;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  body.phone .sidebar { width: 100%; border-right: none; }
+
+  .search-box {
+    margin: 10px; flex: none;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0 10px; height: 32px;
+  }
+  .search-box:focus-within { border-color: var(--accent); }
+  .search-box svg { width: 14px; height: 14px; fill: var(--text-faint); flex: none; }
+  .search-box input {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--text); font-size: 13px;
+    user-select: text; -webkit-user-select: text;
+  }
+  .search-box input::placeholder { color: var(--text-faint); }
+
+  /* 分类（横向滑动，固定高度，触屏防误触） */
+  .cat-bar {
+    flex: none;
+    display: flex; gap: 6px;
+    padding: 0 10px 10px;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .cat-bar::-webkit-scrollbar { display: none; }
+  .cat-chip {
+    flex: none; height: 26px; padding: 0 12px;
+    display: flex; align-items: center; gap: 5px;
+    border-radius: 13px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text-dim);
+    font-size: 12px; cursor: pointer; white-space: nowrap;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .cat-chip:hover { color: var(--text); background: var(--hover); }
+  .cat-chip.active {
+    background: var(--accent-dim); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+  .cat-chip .count { font-size: 11px; color: var(--text-faint); }
+  .cat-chip.active .count { color: var(--accent); opacity: .7; }
+
+  .list-head {
+    flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 14px 6px;
+    font-size: 11px; color: var(--text-faint); letter-spacing: 1px;
+  }
+
+  /* 频道列表 —— 参考主流音乐播放器的列表样式 */
+  .ch-list { flex: 1; overflow-y: auto; padding: 0 6px 8px; }
+  .ch-list::-webkit-scrollbar { width: 6px; }
+  .ch-list::-webkit-scrollbar-thumb { background: #2b3140; border-radius: 3px; }
+  .ch-list::-webkit-scrollbar-track { background: transparent; }
+  .ch-item {
+    display: flex; align-items: center; gap: 9px;
+    height: 46px; padding: 0 8px 0 6px;
+    border-radius: var(--radius); cursor: pointer;
+    position: relative;
+    transition: background .12s;
+  }
+  .ch-item:hover { background: var(--hover); }
+  .ch-item.active { background: var(--accent-dim); }
+  .ch-item.active::before {
+    content: ""; position: absolute; left: 0; top: 10px; bottom: 10px;
+    width: 3px; border-radius: 2px; background: var(--accent);
+  }
+  .ch-idx {
+    width: 22px; flex: none; text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px; color: var(--text-faint);
+  }
+  .ch-item.active .ch-idx { color: var(--accent); font-weight: 700; }
+  .ch-logo {
+    width: 34px; height: 34px; flex: none; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #fff;
+  }
+  .ch-meta { flex: 1; min-width: 0; }
+  .ch-name {
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ch-item.active .ch-name { color: var(--accent); font-weight: 600; }
+  .ch-sub {
+    font-size: 11px; color: var(--text-faint); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ch-state { flex: none; display: flex; align-items: center; gap: 5px; }
+  .hd-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text-dim); font-weight: 600; letter-spacing: .5px;
+  }
+  .ch-item.failed { opacity: .45; }
+  .ch-item.failed .ch-name { text-decoration: line-through; }
+  .fail-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{ opacity: 1 } 50%{ opacity: .35 } }
+
+  /* ====== 右侧播放区 ====== */
+  .player-col { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  body.phone .player-col { flex: none; height: 220px; }
+  body.phone .main { flex-direction: column; }
+  body.phone .main .sidebar-col-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .sidebar-col-wrap { display: contents; }
+
+  .video-wrap {
+    flex: 1; min-height: 0; position: relative;
+    background: #000; margin: 12px; border-radius: 10px;
+    overflow: hidden; border: 1px solid var(--line);
+  }
+  body.phone .video-wrap { margin: 0; border: none; border-radius: 0; border-bottom: 1px solid var(--line); height: 220px; flex: none; }
+  .video-standby {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    background:
+      repeating-linear-gradient(0deg, transparent 0 23px, rgba(255,255,255,.015) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(255,255,255,.015) 23px 24px),
+      #0a0c0f;
+  }
+  .standby-logo {
+    width: 64px; height: 64px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700; color: #fff;
+  }
+  .standby-name { font-size: 16px; font-weight: 600; }
+  .standby-hint { font-size: 12px; color: var(--text-faint); letter-spacing: 2px; }
+  .live-tag {
+    position: absolute; top: 12px; left: 12px;
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.12);
+    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    padding: 3px 9px; border-radius: 5px;
+  }
+  .live-tag .live-dot { width: 6px; height: 6px; }
+
+  /* 视频底部控制条（实色，非玻璃态） */
+  .osd {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 42px; background: #101318;
+    border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 4px; padding: 0 10px;
+  }
+  .osd .icon-btn { width: 30px; height: 30px; }
+  .osd-time {
+    margin-left: auto; font-variant-numeric: tabular-nums;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .osd-vol {
+    width: 70px; height: 3px; border-radius: 2px;
+    background: var(--panel-2); position: relative; margin: 0 8px;
+  }
+  .osd-vol::after {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 65%;
+    background: var(--accent); border-radius: 2px;
+  }
+  .osd-vol::before {
+    content: ""; position: absolute; left: 65%; top: -3.5px; margin-left: -5px;
+    width: 10px; height: 10px; border-radius: 50%; background: #fff;
+  }
+
+  /* 频道信息条 */
+  .info-strip {
+    flex: none; margin: 0 12px 12px; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius);
+    display: flex; align-items: center; gap: 12px;
+  }
+  body.phone .info-strip { margin: 0; border-radius: 0; border: none; border-bottom: 1px solid var(--line); }
+  .info-ch { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; }
+  .info-logo {
+    width: 38px; height: 38px; border-radius: 8px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: #fff; font-size: 13px;
+  }
+  .info-title { font-size: 14px; font-weight: 600; }
+  .info-group { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .stat-chips { flex: none; display: flex; gap: 8px; }
+  .stat-chip {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--text-dim);
+    background: var(--panel-2); border: 1px solid var(--line);
+    padding: 3px 9px; border-radius: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-chip b { color: var(--text); font-weight: 600; }
+
+  /* 底部状态栏 */
+  .statusbar {
+    height: 26px; flex: none;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 14px; border-top: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 11px; color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .statusbar .sep { flex: 1; }
+
+  /* ====== 设置弹窗 ====== */
+  .modal-mask {
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(4,6,10,.72);
+    display: none; align-items: center; justify-content: center;
+  }
+  .modal-mask.open { display: flex; }
+  .modal {
+    width: 520px; max-width: calc(100vw - 40px);
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px;
+    display: flex; flex-direction: column; gap: 14px;
+    max-height: 76vh;
+  }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; }
+  .modal-head h3 { font-size: 15px; }
+  .modal .search-box { margin: 0; }
+  .src-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 120px; }
+  .src-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: var(--radius);
+    background: var(--panel-2); border: 1px solid var(--line);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .src-item:hover { background: var(--hover); }
+  .src-item.active { border-color: var(--accent); background: var(--accent-dim); }
+  .src-radio {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid var(--text-faint); position: relative;
+  }
+  .src-item.active .src-radio { border-color: var(--accent); }
+  .src-item.active .src-radio::after {
+    content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--accent);
+  }
+  .src-url {
+    flex: 1; font-size: 12px; color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    direction: rtl; text-align: left;
+  }
+  .src-item.active .src-url { color: var(--text); }
+  .src-del {
+    flex: none; width: 24px; height: 24px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint); cursor: pointer;
+  }
+  .src-del:hover { color: var(--accent); background: rgba(229,72,77,.12); }
+  .add-row { display: flex; gap: 8px; }
+  .add-row input {
+    flex: 1; height: 34px; border-radius: var(--radius);
+    background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); padding: 0 12px; outline: none; font-size: 13px;
+    user-select: text; -webkit-user-select: text;
+  }
+  .add-row input:focus { border-color: var(--accent); }
+  .btn {
+    height: 34px; padding: 0 18px; border-radius: var(--radius);
+    font-size: 13px; cursor: pointer; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text);
+  }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: #d63c41; }
+  .modal-foot { display: flex; justify-content: flex-end; gap: 10px; }
+
+  /* 手机端分类条固定高度说明：横向滑动不换行 */
+  body.phone .info-strip .stat-chips { display: none; }
+  body.phone .source-pill { max-width: 120px; }
+  body.phone .statusbar { font-size: 10px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="app">
+
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+        M3U PLAYER
+      </div>
+      <div class="source-pill" onclick="openModal()" title="点击管理源">
+        <span class="dot"></span>
+        <span>kuaishou.445569.xyz/list.m3u</span>
+        <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+      </div>
+      <div class="topbar-spacer"></div>
+      <div class="icon-btn" title="刷新列表" onclick="toast('已重新加载频道列表')">
+        <svg viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h7V4z"/></svg>
+      </div>
+      <div class="icon-btn" title="源管理" onclick="openModal()">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94a7.14 7.14 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.14 7.14 0 0 0 0 1.88L2.77 14.5a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.61.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.1.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      </div>
+    </div>
+
+    <!-- 主体 -->
+    <div class="main">
+      <div class="sidebar-col-wrap">
+        <div class="sidebar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+            <input id="search" placeholder="搜索频道…" oninput="renderList()">
+          </div>
+
+          <!-- 分类：横向滑动固定高度 -->
+          <div class="cat-bar" id="catBar"></div>
+
+          <div class="list-head">
+            <span id="listLabel">频道列表</span>
+            <span id="listCount"></span>
+          </div>
+
+          <div class="ch-list" id="chList"></div>
+        </div>
+      </div>
+
+      <div class="player-col">
+        <!-- 视频区 -->
+        <div class="video-wrap">
+          <div class="video-standby">
+            <div class="standby-logo" id="standbyLogo">C1</div>
+            <div class="standby-name" id="standbyName">CCTV-1 综合</div>
+            <div class="standby-hint">SIGNAL · PLAYING</div>
+          </div>
+          <div class="live-tag"><span class="live-dot"></span>LIVE</div>
+          <div class="osd">
+            <div class="icon-btn" title="上一频道" onclick="switchCh(-1)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></div>
+            <div class="icon-btn" title="下一频道" onclick="switchCh(1)"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></div>
+            <div class="icon-btn" title="播放/暂停" onclick="toast('播放 / 暂停')"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+            <div class="icon-btn" title="静音" onclick="toast('静音切换')"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z"/></svg></div>
+            <div class="osd-vol"></div>
+            <div class="osd-time">LIVE · 21:37:04</div>
+            <div class="icon-btn" title="全屏" onclick="toast('全屏切换')"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>
+          </div>
+        </div>
+
+        <!-- 频道信息条 -->
+        <div class="info-strip">
+          <div class="info-ch">
+            <div class="info-logo" id="infoLogo">C1</div>
+            <div style="min-width:0">
+              <div class="info-title" id="infoTitle">CCTV-1 综合</div>
+              <div class="info-group" id="infoGroup">央视 · 高清 1080P · HLS</div>
+            </div>
+          </div>
+          <div class="stat-chips">
+            <div class="stat-chip">频道 <b>128</b></div>
+            <div class="stat-chip">失效 <b style="color:var(--accent)">3</b></div>
+            <div class="stat-chip">HLS <b>96</b></div>
+          </div>
+        </div>
+
+        <div class="statusbar">
+          <span>当前源：kuaishou.445569.xyz</span>
+          <span class="sep"></span>
+          <span>hls.js 1.6 · flv.js 1.6</span>
+          <span>2026-11-24 21:37</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button id="preview-toggle" onclick="togglePhone()">📱 预览手机端布局</button>
+
+<!-- 源管理弹窗 -->
+<div class="modal-mask" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>M3U 源管理</h3>
+      <div class="icon-btn" onclick="closeModal()"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></div>
+    </div>
+    <div class="add-row">
+      <input placeholder="输入 M3U 播放列表地址…" style="user-select:text;-webkit-user-select:text">
+      <button class="btn primary" onclick="toast('已添加')">添加</button>
+    </div>
+    <div class="src-list">
+      <div class="src-item active"><div class="src-radio"></div><div class="src-url">https://kuaishou.445569.xyz/list.m3u</div><div class="src-del"><svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></div></div>
+      <div class="src-item"><div class="src-radio"></div><div class="src-url">https://epg.pw/test_channels.m3u</div><div class="src-del"><svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></div></div>
+      <div class="src-item"><div class="src-radio"></div><div class="src-url">https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8</div><div class="src-del"><svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></div></div>
+      <div class="src-item"><div class="src-radio"></div><div class="src-url">https://live.445569.xyz/live.m3u</div><div class="src-del"><svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" onclick="closeModal();toast('已切换源并重新加载')">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" style="position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:#000;border:1px solid var(--line);color:var(--text);padding:8px 18px;border-radius:8px;font-size:12px;z-index:3000;display:none">提示</div>
+
+<script>
+  // ===== 示例数据 =====
+  const COLORS = ['#c94f4f','#4f7cc9','#5aa66a','#a68a4f','#8a5ac9','#4fa6a0','#c96a4f','#5a6bc9','#7aa64f','#a64f86'];
+  const CATS = ['全部','央视','卫视','体育','电影','纪实','少儿','港澳台'];
+  const CHS = [
+    {n:'CCTV-1 综合',g:'央视',hd:'4K'},
+    {n:'CCTV-2 财经',g:'央视',hd:'HD',fail:true},
+    {n:'CCTV-3 综艺',g:'央视',hd:'HD'},
+    {n:'CCTV-5 体育',g:'体育',hd:'HD'},
+    {n:'CCTV-5+ 体育赛事',g:'体育',hd:'HD'},
+    {n:'CCTV-6 电影',g:'电影',hd:'HD'},
+    {n:'CCTV-9 纪录',g:'纪实',hd:'HD'},
+    {n:'CCTV-14 少儿',g:'少儿',hd:'HD'},
+    {n:'湖南卫视',g:'卫视',hd:'HD'},
+    {n:'浙江卫视',g:'卫视',hd:'HD'},
+    {n:'江苏卫视',g:'卫视',hd:'HD'},
+    {n:'东方卫视',g:'卫视',hd:'HD'},
+    {n:'北京体育',g:'体育',hd:'HD'},
+    {n:'五星体育',g:'体育',hd:'HD'},
+    {n:'动作电影',g:'电影',hd:'SD',fail:true},
+    {n:'探索纪实',g:'纪实',hd:'HD'},
+    {n:'金鹰卡通',g:'少儿',hd:'HD'},
+    {n:'TVB Jade',g:'港澳台',hd:'HD'},
+    {n:'凤凰中文台',g:'港澳台',hd:'HD',fail:true},
+    {n:'翡翠台',g:'港澳台',hd:'HD'}
+  ];
+  let curCat = '全部', curIdx = 0;
+
+  const $ = id => document.getElementById(id);
+
+  // 分类条
+  function renderCats(){
+    $('catBar').innerHTML = CATS.map(c=>{
+      const cnt = c==='全部' ? CHS.length : CHS.filter(x=>x.g===c).length;
+      return `<div class="cat-chip ${c===curCat?'active':''}" onclick="curCat='${c}';renderCats();renderList()">${c}<span class="count">${cnt}</span></div>`;
+    }).join('');
+    $('listLabel').textContent = curCat==='全部' ? '频道列表' : curCat + '频道';
+  }
+
+  // 频道列表
+  function renderList(){
+    const kw = $('search').value.trim().toLowerCase();
+    let list = curCat==='全部' ? CHS : CHS.filter(x=>x.g===curCat);
+    if(kw) list = list.filter(x=>x.n.toLowerCase().includes(kw));
+    $('listCount').textContent = list.length + ' 个';
+    const globalIdx = x => CHS.indexOf(x);
+    $('chList').innerHTML = list.map((x,i)=>{
+      const gi = globalIdx(x);
+      const c = COLORS[gi % COLORS.length];
+      const logo = x.n.replace(/^CCTV-/,'C').split(/[\s-]/)[0].slice(0,2);
+      return `<div class="ch-item ${gi===curIdx?'active':''} ${x.fail?'failed':''}" onclick="pick(${gi})">
+        <div class="ch-idx">${String(i+1).padStart(2,'0')}</div>
+        <div class="ch-logo" style="background:${c}">${logo}</div>
+        <div class="ch-meta">
+          <div class="ch-name">${x.n}</div>
+          <div class="ch-sub">${x.g} · ${x.hd}</div>
+        </div>
+        <div class="ch-state">${x.fail?'<div class="fail-dot"></div>':(gi===curIdx?'<div class="live-dot"></div>':'')}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function pick(i){
+    curIdx = i;
+    const x = CHS[i];
+    const c = COLORS[i % COLORS.length];
+    const logo = x.n.replace(/^CCTV-/,'C').split(/[\s-]/)[0].slice(0,2);
+    $('standbyLogo').textContent = logo; $('standbyLogo').style.background = c;
+    $('standbyName').textContent = x.n;
+    $('infoLogo').textContent = logo; $('infoLogo').style.background = c;
+    $('infoTitle').textContent = x.n;
+    $('infoGroup').textContent = `${x.g} · ${x.hd === '4K' ? '超清 2160P' : x.hd==='HD' ? '高清 1080P' : '标清 540P'} · HLS`;
+    renderList();
+    toast('正在播放：' + x.n);
+  }
+  function switchCh(d){
+    let i = curIdx;
+    for(let k=1;k<=CHS.length;k++){
+      const n = (curIdx + d*k + CHS.length*k) % CHS.length;
+      if(!CHS[n].fail){ pick(n); return; }
+    }
+    toast('没有可用频道');
+  }
+
+  // 弹窗 / 提示 / 预览切换
+  function openModal(){ $('modal').classList.add('open'); }
+  function closeModal(){ $('modal').classList.remove('open'); }
+  $('modal').addEventListener('click', e=>{ if(e.target===$('modal')) closeModal(); });
+  let toastTimer;
+  function toast(msg){
+    const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=> t.style.display='none', 1600);
+  }
+  function togglePhone(){
+    document.body.classList.toggle('phone');
+    const p = document.body.classList.contains('phone');
+    $('preview-toggle').textContent = p ? '🖥 预览桌面端布局' : '📱 预览手机端布局';
+  }
+
+  document.addEventListener('keydown', e=>{
+    if(e.key==='ArrowUp') { e.preventDefault(); switchCh(-1); }
+    if(e.key==='ArrowDown') { e.preventDefault(); switchCh(1); }
+    if(e.key==='Escape') closeModal();
+  });
+
+  renderCats(); renderList(); pick(0); $('toast').style.display='none';
+</script>
+</body>
+</html>

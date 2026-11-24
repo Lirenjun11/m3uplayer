@@ -2,7 +2,18 @@ const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_FILE = path.join(__dirname, 'm3u-config.json');
+// 配置文件存放在 userData 目录（打包安装后可写），首次运行时从旧位置迁移
+const LEGACY_CONFIG_FILE = path.join(__dirname, 'm3u-config.json');
+const CONFIG_FILE = ipcRenderer.sendSync('config:path');
+
+try {
+  if (!fs.existsSync(CONFIG_FILE) && fs.existsSync(LEGACY_CONFIG_FILE)) {
+    fs.copyFileSync(LEGACY_CONFIG_FILE, CONFIG_FILE);
+    console.log('已迁移配置文件到:', CONFIG_FILE);
+  }
+} catch (error) {
+  console.error('迁移配置文件失败:', error);
+}
 
 function loadConfig() {
   try {
@@ -56,6 +67,16 @@ window.loadConfig = loadConfig;
 window.addUrl = addUrl;
 window.removeUrl = removeUrl;
 window.setCurrentUrl = setCurrentUrl;
+
+// 自动更新 API
+window.updateAPI = {
+  getAppVersion: () => ipcRenderer.invoke('update:get-app-version'),
+  check: () => ipcRenderer.invoke('update:check'),
+  install: () => ipcRenderer.send('update:install'),
+  onUpdaterEvent: (callback) => {
+    ipcRenderer.on('updater:event', (_event, data) => callback(data));
+  }
+};
 
 window.addEventListener('DOMContentLoaded', () => {
   const replaceText = (selector, text) => {
